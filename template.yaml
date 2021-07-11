@@ -1,0 +1,116 @@
+AWSTemplateFormatVersion : 2010-09-09
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  ImageMonitoringStack
+
+Parameters:
+  ImageObserverQueueName:
+    Type: String
+    Description: ImageObserverQueue name
+    Default: ImageObserver
+  ImageMonitoringTableName:
+    Type: String
+    Description: ImageMonitoringTable name
+    Default: image-monitoring-table
+  ImageMonitoringPayloadBucketName:
+    Type: String
+    Description: ImageMonitoringPayloadBucket name
+    Default: image-monitoring-payload
+
+Resources:
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Policies:
+        - PolicyName: allowLambdaLogs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+              - logs:*
+              Resource: arn:aws:logs:*:*:*
+        - PolicyName: allowSqs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+              - sqs:ReceiveMessage
+              - sqs:DeleteMessage
+              - sqs:GetQueueAttributes
+              - sqs:ChangeMessageVisibility
+              Resource: !GetAtt ImageObserverQueue.Arn
+        - PolicyName: allowS3
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+                - s3:PutObject
+                - s3:PutObjectAcl
+                - s3:GetObject
+                - s3:GetObjectAcl
+                - s3:DeleteObject
+              Resource: !Join 
+              - ''
+              - - 'arn:aws:s3:::'
+                - !Ref ImageMonitoringPayloadBucketName
+                - /*
+        - PolicyName: allowDynamoDB
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:BatchGetItem
+                - dynamodb:GetItem
+                - dynamodb:Query
+                - dynamodb:Scan
+                - dynamodb:BatchWriteItem
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+              Resource: !GetAtt ImageMonitoringTable.Arn
+
+  ImageMonitoringLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        S3Bucket: bi-source
+        S3Key: lambda/imageMonitoring.zip
+      Handler: handler_image_monitoring.main
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Runtime: python3.8
+
+  LambdaFunctionEventSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      BatchSize: 10
+      Enabled: true
+      EventSourceArn: !GetAtt ImageObserverQueue.Arn
+      FunctionName: !GetAtt ImageMonitoringLambdaFunction.Arn
+
+  ImageObserverQueue: 
+    Type: AWS::SQS::Queue
+    Properties: 
+      QueueName: !Ref ImageObserverQueueName
+
+  ImageMonitoringTable:
+    Type: AWS::Serverless::SimpleTable
+    Properties:
+      TableName: !Ref ImageMonitoringTableName
+
+  ImageMonitoringPayloadS3Bucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    Properties:
+      BucketName: !Ref ImageMonitoringPayloadBucketName
